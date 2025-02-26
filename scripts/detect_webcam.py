@@ -100,6 +100,26 @@ def get_position(x_min, x_max, frame_width):
         return "on your right"
     return "in front of you"
 
+def analyze_path_clearance(frame_width, detected_objects):
+    """Analyze the path ahead and find the maximum safe distance"""
+    # Define path zones (left, center, right)
+    zones = {
+        'center': (frame_width/3, 2*frame_width/3),
+        'left': (0, frame_width/3),
+        'right': (2*frame_width/3, frame_width)
+    }
+    
+    zone_clearances = {zone: float('inf') for zone in zones.keys()}
+    
+    for obj, distance, position, _ in detected_objects:
+        x_center = position[0]  # Assuming position now returns (x_center, distance)
+        # Check which zone the object is in
+        for zone, (start, end) in zones.items():
+            if start <= x_center <= end:
+                zone_clearances[zone] = min(zone_clearances[zone], distance)
+    
+    return zone_clearances
+
 class VoiceCommandHandler:
     def __init__(self):
         self.recognizer = sr.Recognizer()
@@ -154,6 +174,8 @@ class VoiceCommandHandler:
                     elif any(phrase in command for phrase in ["what's around", "what is around", "describe", "tell me"]):
                         self.command_queue.put(("action", "describe"))
                         self._play_feedback('command_recognized')
+                    if any(word in command for word in ["clear", "path", "safe distance"]):
+                        self.command_queue.put(("action", "clearance"))
                     
                 except sr.WaitTimeoutError:
                     continue
@@ -223,6 +245,7 @@ while cap.isOpened():
             print("Low light conditions detected")
         
     # Enhanced threat detection
+    detected_objects = []  # (object_name, distance, (x_center, y_center), threat_score)
     for result in results.boxes.data:
         x_min, y_min, x_max, y_max, conf, class_id = result
         x_min, y_min, x_max, y_max = map(int, [x_min, y_min, x_max, y_max])
@@ -234,7 +257,18 @@ while cap.isOpened():
         obj_width = x_max - x_min
         distance = (KNOWN_WIDTH * FOCAL_LENGTH) / obj_width
         distance = round(distance)
-        position = get_position(x_min, x_max, frame_width)
+        
+        # Calculate center coordinates
+        x_center = (x_min + x_max) / 2
+        y_center = (y_min + y_max) / 2
+        
+        # Get directional position as string
+        position_str = get_position(x_min, x_max, frame_width)
+        # Store both position string and coordinates
+        position_data = {
+            'direction': position_str,
+            'coords': (x_center, y_center)
+        }
 
         # Enhanced threat assessment
         if obj_name in THREAT_OBJECTS:
@@ -254,7 +288,8 @@ while cap.isOpened():
                 
             # Add to threats with score
             if threat_score > 5:  # Threshold for threat consideration
-                threats.append((obj_name, distance, position, threat_score))
+                threats.append((obj_name, distance, position_data, threat_score))
+                detected_objects.append((obj_name, distance, position_data['coords'], threat_score))
                 # Play spatial audio for immediate threats
                 if distance < threat_info['safe_distance'] * 0.5:
                     play_spatial_sound(sounds['warning'], (x_min + x_max) / 2, distance)
@@ -263,7 +298,7 @@ while cap.isOpened():
         cv2.putText(frame, f"{obj_name}: {distance}cm", (x_min, y_min - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-        detected_speech.append(f"{obj_name} {position} at {distance} centimeters")
+        detected_speech.append(f"{obj_name} {position_str} at {distance} centimeters")
 
     current_time = time.time()
     command_data = voice_handler.get_command()
@@ -275,6 +310,20 @@ while cap.isOpened():
             tts_engine.runAndWait()
         elif command_type == "action" and command_value == "describe":
             announcement = ", ".join(detected_speech)
+            tts_engine.say(announcement)
+            tts_engine.runAndWait()
+        elif command_value == "clearance":
+            clearances = analyze_path_clearance(frame_width, detected_objects)
+            
+            # Generate clearance announcement
+            clear_paths = []
+            for zone, distance in clearances.items():
+                if distance > 500:  # More than 5 meters is considered "clear"
+                    clear_paths.append(f"{zone} path clear")
+                else:
+                    clear_paths.append(f"{zone} path clear for {int(distance)} centimeters")
+            
+            announcement = ". ".join(clear_paths)
             tts_engine.say(announcement)
             tts_engine.runAndWait()
 
@@ -290,8 +339,9 @@ while cap.isOpened():
     if current_mode == "walking" and threats and (current_time - last_announcement_time) > ANNOUNCEMENT_COOLDOWN:
         # Sort threats by score instead of just distance
         threats.sort(key=lambda x: x[3], reverse=True)
-        # Announce most immediate threats
-        threat_announcements = [f"{obj} {pos} at {dist} centimeters" for obj, dist, pos, score in threats[:2]]
+        # Use the direction string instead of coordinates for announcements
+        threat_announcements = [f"{obj} {pos['direction']} at {dist} centimeters" 
+                              for obj, dist, pos, score in threats[:2]]
         if threat_announcements:
             announcement = "Warning: " + ", ".join(threat_announcements)
             tts_engine.say(announcement)
@@ -304,6 +354,17 @@ while cap.isOpened():
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
+
+    # Visualize path clearance
+    for zone, (start, end) in {'center': (frame_width/3, 2*frame_width/3),
+                              'left': (0, frame_width/3),
+                              'right': (2*frame_width/3, frame_width)}.items():
+        # Draw path zones
+        cv2.rectangle(frame, 
+                     (int(start), 0),
+                     (int(end), frame.shape[0]),
+                     (0, 255, 0, 0.3),  # Green with transparency
+                     2)
 
     # Update previous frame for motion detection
     motion_detector.previous_frame = frame.copy()
