@@ -75,6 +75,88 @@ python scripts/detect_image_cellcam.py
 - "what's around" - Get description of surroundings
 - "describe" - Same as "what's around"
 
+## Navigation Mode
+
+Navigation mode is designed to provide continuous, intelligent guidance for safe movement through the environment. It combines multiple detection systems to create a comprehensive understanding of the surroundings.
+
+### Features
+
+- **Precise Directional Guidance**
+  - "Slightly left/right"
+  - "More to the left/right"
+  - "Far to the left/right"
+  - "Directly ahead"
+
+- **Surface Detection**
+  - Walls
+  - Doors
+  - Floor obstacles
+  - Ceiling hazards
+  - Structural elements
+
+- **Dynamic Path Finding**
+  - Calculates safest walking path
+  - Updates in real-time
+  - Considers multiple obstacles
+  - Identifies clear paths
+
+- **Priority-Based Announcements**
+  - Immediate threats announced first
+  - Distance-based urgency levels
+  - Spatial audio feedback
+  - Continuous monitoring
+
+### Usage
+
+1. **Activate Navigation Mode**
+   ```
+   Voice Command: "navigate" or "guide me"
+   ```
+
+2. **Understanding Feedback**
+   - Verbal guidance: "[Object] [Distance] [Direction]"
+   - Warning sounds: Different tones for different threat levels
+   - Spatial audio: Sound comes from direction of obstacle
+
+3. **Distance Zones**
+   - Immediate (< 1 meter): Urgent warnings
+   - Caution (1-2 meters): Alert notifications
+   - Notice (2-5 meters): Informational updates
+
+4. **Path Guidance**
+   - System suggests safest direction
+   - Continuously updates as you move
+   - Considers multiple obstacles simultaneously
+   - Provides alternative routes when blocked
+
+### Safety Features
+
+- High-priority obstacle detection
+- Real-time surface detection
+- Motion tracking for moving objects
+- Environmental awareness
+- Multiple backup detection systems
+- Continuous path recalculation
+
+### Visual Feedback (For Assistants/Development)
+
+- Color-coded threats
+  - Red: Immediate danger
+  - Yellow: Caution required
+  - Green: Safe path
+- Center line guide
+- Safe zone indication
+- Surface highlighting
+- Path overlay visualization
+
+### Example Announcements
+
+```
+"Wall 150 centimeters to your right. Safest path is slightly to the left"
+"Warning! Person moving 100 centimeters directly ahead. Move far to the right"
+"Door 200 centimeters ahead, move slightly left for clear path"
+```
+
 ## Project Structure
 
 ```

@@ -9,6 +9,7 @@ import queue
 import time
 import pygame
 import math
+from scipy.spatial import distance as dist
 
 # Enhanced threat definitions with more context
 THREAT_OBJECTS = {
@@ -24,6 +25,22 @@ THREAT_OBJECTS = {
     'hole': {'safe_distance': 200, 'priority': 7, 'motion_sensitive': False},
     'stairs': {'safe_distance': 200, 'priority': 6, 'motion_sensitive': False},
 }
+
+# Add wall detection classes
+SURFACE_OBJECTS = {
+    'wall': {'min_area': 20000, 'danger_distance': 150},
+    'floor': {'min_area': 30000, 'danger_distance': 100},
+    'ceiling': {'min_area': 20000, 'danger_distance': 200},
+    'door': {'min_area': 15000, 'danger_distance': 150},
+}
+
+# Update THREAT_OBJECTS with more structural hazards
+THREAT_OBJECTS.update({
+    'wall': {'safe_distance': 200, 'priority': 7, 'motion_sensitive': False},
+    'door': {'safe_distance': 200, 'priority': 6, 'motion_sensitive': False},
+    'stairs': {'safe_distance': 300, 'priority': 8, 'motion_sensitive': False},
+    'elevator': {'safe_distance': 200, 'priority': 7, 'motion_sensitive': False},
+})
 
 # Add spatial audio feedback
 def init_audio():
@@ -120,6 +137,29 @@ def analyze_path_clearance(frame_width, detected_objects):
     
     return zone_clearances
 
+def get_navigation_guidance(x_center, frame_width):
+    """Get more precise directional guidance"""
+    center_zone = frame_width * 0.1  # 10% tolerance for center
+    frame_center = frame_width / 2
+    
+    if abs(x_center - frame_center) < center_zone:
+        return "directly ahead"
+    
+    deviation = abs(x_center - frame_center) / (frame_width / 2)  # 0 to 1
+    intensity = "slightly" if deviation < 0.3 else "more" if deviation < 0.6 else "far"
+    direction = "left" if x_center < frame_center else "right"
+    
+    return f"ahead, move {intensity} to the {direction}"
+
+def get_urgency_level(distance):
+    """Determine urgency of navigation guidance"""
+    if distance < 100:
+        return "immediate", 1.0
+    elif distance < 200:
+        return "caution", 0.7
+    else:
+        return "notice", 0.4
+
 class VoiceCommandHandler:
     def __init__(self):
         self.recognizer = sr.Recognizer()
@@ -176,6 +216,8 @@ class VoiceCommandHandler:
                         self._play_feedback('command_recognized')
                     if any(word in command for word in ["clear", "path", "safe distance"]):
                         self.command_queue.put(("action", "clearance"))
+                    if any(word in command for word in ["navigate", "navigation", "guide me"]):
+                        self.command_queue.put(("mode", "navigation"))
                     
                 except sr.WaitTimeoutError:
                     continue
@@ -227,6 +269,182 @@ sounds = init_audio()
 previous_threats = []
 environment_check_interval = 30  # frames
 frame_count = 0
+
+# Add navigation mode settings
+NAVIGATION_ANNOUNCEMENT_COOLDOWN = 1.5  # More frequent updates in navigation mode
+last_navigation_announcement = 0
+
+def detect_surfaces(frame):
+    """Detect walls and large surfaces using edge detection"""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 150)
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, 100, minLineLength=100, maxLineGap=10)
+    
+    surfaces = []
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            angle = np.abs(np.arctan2(y2-y1, x2-x1) * 180 / np.pi)
+            
+            # Classify lines as vertical (walls) or horizontal (floors/ceilings)
+            if 80 <= angle <= 100:  # Vertical lines
+                surfaces.append(('wall', (x1, y1, x2, y2)))
+            elif 0 <= angle <= 10 or 170 <= angle <= 180:  # Horizontal lines
+                y_pos = (y1 + y2) / 2
+                if y_pos < frame.shape[0] / 2:
+                    surfaces.append(('ceiling', (x1, y1, x2, y2)))
+                else:
+                    surfaces.append(('floor', (x1, y1, x2, y2)))
+    
+    return surfaces
+
+def get_improved_position(x_center, frame_width):
+    """Get more accurate directional guidance"""
+    # Define zones with percentages
+    left_zone = frame_width * 0.4
+    right_zone = frame_width * 0.6
+    far_left = frame_width * 0.2
+    far_right = frame_width * 0.8
+    
+    if x_center < far_left:
+        return "far to your left"
+    elif x_center < left_zone:
+        return "to your left"
+    elif x_center > far_right:
+        return "far to your right"
+    elif x_center > right_zone:
+        return "to your right"
+    else:
+        return "directly in front of you"
+
+def calculate_safe_path(frame, threats, surfaces):
+    """Calculate the safest path direction"""
+    frame_height, frame_width = frame.shape[:2]
+    danger_map = np.zeros((frame_height, frame_width))
+    
+    # Add threat influences to danger map
+    for threat in threats:
+        x_center = threat['coords'][0]
+        distance = threat['distance']
+        influence = 1.0 / max(distance, 50)  # Avoid division by zero
+        cv2.circle(danger_map, (int(x_center), frame_height-50), 
+                  int(100 * influence), 1, -1)
+    
+    # Add surface influences to danger map
+    for surface in surfaces:
+        x1, y1, x2, y2 = surface['coords']
+        depth = surface['depth']
+        influence = 1.0 / max(depth, 50)
+        cv2.rectangle(danger_map, 
+                     (int(x1), int(y1)), 
+                     (int(x2), int(y2)), 
+                     influence, -1)
+    
+    # Find safest direction
+    column_sums = np.sum(danger_map, axis=0)
+    safest_x = np.argmin(column_sums)
+    return get_improved_position(safest_x, frame_width)
+
+def detect_surfaces_improved(frame):
+    """Enhanced surface detection using multiple techniques"""
+    height, width = frame.shape[:2]
+    
+    # Convert to grayscale
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+    # Apply bilateral filter to reduce noise while preserving edges
+    blurred = cv2.bilateralFilter(gray, 9, 75, 75)
+    
+    # Edge detection
+    edges = cv2.Canny(blurred, 50, 150)
+    
+    # Enhance edges using morphological operations
+    kernel = np.ones((3,3), np.uint8)
+    edges = cv2.dilate(edges, kernel, iterations=1)
+    
+    # Find contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    surfaces = []
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < 1000:  # Filter small contours
+            continue
+            
+        # Approximate the contour
+        epsilon = 0.02 * cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, epsilon, True)
+        
+        # Get bounding rectangle
+        x, y, w, h = cv2.boundingRect(approx)
+        aspect_ratio = float(w)/h if h != 0 else 0
+        
+        # Analyze shape and position
+        if len(approx) > 4:  # Complex shape
+            continue
+            
+        # Classify surface type
+        if aspect_ratio > 2.5:  # Horizontal surface
+            if y < height/2:
+                surface_type = 'ceiling'
+            else:
+                surface_type = 'floor'
+        elif 0.5 <= aspect_ratio <= 2.0:  # Vertical surface
+            surface_type = 'wall'
+            if w < width/4:  # Narrow vertical surface
+                surface_type = 'door'
+        else:
+            continue
+        
+        # Calculate depth approximation
+        depth = estimate_surface_depth(frame, (x, y, w, h))
+        
+        surfaces.append({
+            'type': surface_type,
+            'coords': (x, y, x+w, y+h),
+            'depth': depth,
+            'area': area
+        })
+    
+    return surfaces
+
+def estimate_surface_depth(frame, rect):
+    """Estimate depth of surface using size and position"""
+    x, y, w, h = rect
+    height, width = frame.shape[:2]
+    
+    # Use size and position to estimate depth
+    relative_size = (w * h) / (width * height)
+    relative_position = y / height
+    
+    # Combine factors for depth estimation
+    depth = int((1 / relative_size) * (1 + relative_position) * 100)
+    return min(max(depth, 50), 500)  # Limit depth between 50cm and 500cm
+
+def draw_surface_overlay(frame, surfaces):
+    """Visualize detected surfaces"""
+    for surface in surfaces:
+        x1, y1, x2, y2 = surface['coords']
+        surface_type = surface['type']
+        depth = surface['depth']
+        
+        # Different colors for different surface types
+        colors = {
+            'wall': (0, 0, 255),    # Red
+            'floor': (0, 255, 0),   # Green
+            'ceiling': (255, 0, 0), # Blue
+            'door': (0, 255, 255)   # Yellow
+        }
+        
+        color = colors.get(surface_type, (255, 255, 255))
+        
+        # Draw surface boundary
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        
+        # Add label with depth
+        label = f"{surface_type}: {depth}cm"
+        cv2.putText(frame, label, (x1, y1-10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -347,6 +565,86 @@ while cap.isOpened():
             tts_engine.say(announcement)
             tts_engine.runAndWait()
             last_announcement_time = current_time
+
+    # Handle navigation mode
+    if current_mode == "navigation":
+        # Detect surfaces
+        surfaces = detect_surfaces_improved(frame)
+        navigation_threats = []
+        
+        for result in results.boxes.data:
+            x_min, y_min, x_max, y_max, conf, class_id = result
+            x_min, y_min, x_max, y_max = map(int, [x_min, y_min, x_max, y_max])
+            obj_name = model.names[int(class_id)]
+            
+            if conf < 0.3:  # Higher confidence threshold for navigation
+                continue
+            
+            x_center = (x_min + x_max) / 2
+            obj_width = x_max - x_min
+            distance = round((KNOWN_WIDTH * FOCAL_LENGTH) / obj_width)
+            
+            if distance < 500:  # Only consider obstacles within 5 meters
+                guidance = get_improved_position(x_center, frame_width)
+                urgency, priority = get_urgency_level(distance)
+                navigation_threats.append({
+                    'object': obj_name,
+                    'distance': distance,
+                    'guidance': guidance,
+                    'urgency': urgency,
+                    'priority': priority,
+                    'coords': (x_center, y_center)
+                })
+        
+        # Process detected surfaces
+        for surface in surfaces:
+            x1, y1, x2, y2 = surface['coords']
+            x_center = (x1 + x2) / 2
+            distance = SURFACE_OBJECTS[surface['type']]['danger_distance']
+            
+            if distance < SURFACE_OBJECTS[surface['type']]['danger_distance']:
+                navigation_threats.append({
+                    'object': surface['type'],
+                    'distance': distance,
+                    'guidance': get_improved_position(x_center, frame_width),
+                    'urgency': 'caution',
+                    'priority': 0.8,
+                    'coords': (x_center, (y1 + y2) / 2)
+                })
+        
+        # Calculate safe path
+        safe_direction = calculate_safe_path(frame, navigation_threats, surfaces)
+        
+        # Navigation announcements
+        current_time = time.time()
+        if navigation_threats and (current_time - last_navigation_announcement) > NAVIGATION_ANNOUNCEMENT_COOLDOWN:
+            # Sort by priority and distance
+            navigation_threats.sort(key=lambda x: (x['priority'], -x['distance']), reverse=True)
+            
+            # Take most important threat
+            threat = navigation_threats[0]
+            announcement = (f"{threat['object']} {threat['distance']} centimeters {threat['guidance']}. "
+                          f"Safest path is {safe_direction}")
+            
+            if threat['urgency'] == "immediate":
+                announcement = f"Warning! {announcement}"
+            
+            tts_engine.say(announcement)
+            tts_engine.runAndWait()
+            last_navigation_announcement = current_time
+            
+            # Play spatial audio based on urgency
+            if threat['urgency'] == "immediate":
+                play_spatial_sound(sounds['warning'], x_center, distance)
+            elif threat['urgency'] == "caution":
+                play_spatial_sound(sounds['proximity'], x_center, distance)
+        
+        # Draw navigation overlay
+        cv2.line(frame, (int(frame_width/2), 0), (int(frame_width/2), frame.shape[0]), 
+                (0, 255, 0), 1)  # Center line
+        cv2.rectangle(frame, (int(frame_width/2 - frame_width*0.1), 0),
+                     (int(frame_width/2 + frame_width*0.1), frame.shape[0]),
+                     (0, 255, 0), 1)  # Safe zone
 
     cv2.putText(frame, f"Mode: {current_mode}", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
