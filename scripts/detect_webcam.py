@@ -13,6 +13,9 @@ from scipy.spatial import distance as dist
 import logging
 import psutil
 import os  # Add os import
+from queue import Queue
+from threading import Thread
+
 # import face_recognition  # Add at top with other imports
 global _results
 
@@ -23,6 +26,11 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Add sound settings
+SOUND_COOLDOWN = 2.0  # seconds between sound alerts
+DISTANCE_THRESHOLD_NORMAL = 200  # cm - distance threshold for normal mode
+PRIORITY_THRESHOLD_NORMAL = 6  # minimum priority score for alerts in normal mode
 
 # Platform-specific imports
 IS_RASPBERRY_PI = False
@@ -479,6 +487,7 @@ FOCAL_LENGTH = 700  # Experimentally determined (adjust if needed)
 # Add mode tracking
 current_mode = "normal"
 last_announcement_time = time.time()
+last_sound_time = time.time()  # Add this line
 ANNOUNCEMENT_COOLDOWN = 2  # seconds
 
 # Add new initialization
@@ -487,26 +496,6 @@ sounds = init_audio()
 previous_threats = []
 environment_check_interval = 30  # frames
 frame_count = 0
-
-# Add navigation mode settings
-NAVIGATION_ANNOUNCEMENT_COOLDOWN = 1.5  # More frequent updates in navigation mode
-last_navigation_announcement = 0
-
-# After NAVIGATION_ANNOUNCEMENT_COOLDOWN constant
-SOUND_COOLDOWN = 2.5  # seconds between sound alerts in normal mode
-DISTANCE_THRESHOLD_NORMAL = 150  # only play sounds for very close objects in normal mode
-PRIORITY_THRESHOLD_NORMAL = 7  # only play sounds for high-priority threats in normal mode
-last_sound_time = 0
-
-# Navigation mode specific settings
-NAVIGATION_ANNOUNCEMENT_COOLDOWN = 1.5  # More frequent updates
-NAVIGATION_CONF_THRESHOLD = 0.3  # Higher confidence required
-NAVIGATION_RANGE = 500  # Consider obstacles within 5 meters
-
-# Walking mode specific settings
-ANNOUNCEMENT_COOLDOWN = 2.0  # Less frequent updates
-WALKING_CONF_THRESHOLD = 0.2  # Lower confidence threshold
-MAX_THREAT_ANNOUNCEMENTS = 2  # Only announce top 2 threats
 
 # Enhanced Navigation Mode Settings
 NAVIGATION_SETTINGS = {
@@ -519,7 +508,6 @@ NAVIGATION_SETTINGS = {
         'far': 500
     },
     'max_threats': 2,  # Reduced for clearer guidance
-    'sound_cooldown': 1.0,  # Faster sound feedback
     'priority_threshold': 6,
     'safe_zone_width': 0.15,  # Narrower safe zone for precise navigation
     'angle_thresholds': {
@@ -789,6 +777,86 @@ class FaceManager:
 # Initialize face manager
 face_manager = FaceManager(FACE_SETTINGS['database_path'])
 
+# Add new TTS handler class after other class definitions
+class TTSHandler:
+    def __init__(self):
+        self.tts_engine = pyttsx3.init()
+        self.tts_engine.setProperty('rate', 150)
+        self.message_queue = Queue()
+        self.is_speaking = False
+        self.stop_flag = False
+        self.start_worker()
+
+    def start_worker(self):
+        self.worker_thread = Thread(target=self._process_messages, daemon=True)
+        self.worker_thread.start()
+
+    def _process_messages(self):
+        while not self.stop_flag:
+            try:
+                message = self.message_queue.get(timeout=0.1)
+                if message:
+                    self.is_speaking = True
+                    self.tts_engine.say(message)
+                    self.tts_engine.runAndWait()
+                    self.is_speaking = False
+            except queue.Empty:
+                continue
+
+    def say(self, message):
+        # Don't queue duplicate messages
+        if self.message_queue.empty() or message != self.message_queue.queue[-1]:
+            self.message_queue.put(message)
+
+    def stop(self):
+        self.stop_flag = True
+        self.message_queue.put(None)  # Unblock the worker thread
+        self.worker_thread.join(timeout=1)
+
+# Add audio manager class
+class AudioManager:
+    def __init__(self):
+        pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+        pygame.mixer.set_num_channels(8)
+        self.sound_queue = Queue()
+        self.current_sounds = set()
+        self.start_worker()
+
+    def start_worker(self):
+        self.worker_thread = Thread(target=self._process_sounds, daemon=True)
+        self.worker_thread.start()
+
+    def _process_sounds(self):
+        while True:
+            try:
+                sound, position, distance = self.sound_queue.get(timeout=0.1)
+                if sound not in self.current_sounds:
+                    self.current_sounds.add(sound)
+                    self._play_spatial_sound(sound, position, distance)
+                    self.current_sounds.remove(sound)
+            except queue.Empty:
+                continue
+
+    def _play_spatial_sound(self, sound, position, distance):
+        width = get_frame_width()
+        if width is None:
+            return
+        left_vol = 1.0 - (position / width)
+        right_vol = position / width
+        volume = 1.0 - min(1.0, distance / 500)
+        sound.set_volume(volume)
+        channel = pygame.mixer.find_channel()
+        if channel:
+            channel.set_volume(left_vol, right_vol)
+            channel.play(sound)
+
+    def queue_sound(self, sound, position, distance):
+        self.sound_queue.put((sound, position, distance))
+
+# Replace global tts_engine initialization with TTSHandler
+tts_handler = TTSHandler()
+audio_manager = AudioManager()
+
 # Main loop
 while True:
     try:
@@ -888,12 +956,12 @@ while True:
                         if (current_time - last_sound_time >= SOUND_COOLDOWN and 
                             distance < DISTANCE_THRESHOLD_NORMAL and 
                             threat_score > PRIORITY_THRESHOLD_NORMAL):
-                            play_spatial_sound(sounds['warning'], (x_min + x_max) / 2, distance)
+                            audio_manager.queue_sound(sounds['warning'], (x_min + x_max) / 2, distance)
                             last_sound_time = current_time
                     else:
                         # Original behavior for other modes
                         if distance < threat_info['safe_distance'] * 0.5:
-                            play_spatial_sound(sounds['warning'], (x_min + x_max) / 2, distance)
+                            audio_manager.queue_sound(sounds['warning'], (x_min + x_max) / 2, distance)
 
             cv2.rectangle(processed_frame, (x_min, y_min), (x_max, y_max), (0, 0, 255), 2)  # Red for threats
             cv2.putText(processed_frame, f"{obj_name}: {distance}cm", (x_min, y_min - 10),
@@ -908,12 +976,10 @@ while True:
             command_type, command_value = command_data
             if command_type == "mode":
                 current_mode = command_value
-                tts_engine.say(f"Switching to {command_value} mode")
-                tts_engine.runAndWait()
+                tts_handler.say(f"Switching to {command_value} mode")
             elif command_type == "action" and command_value == "describe":
                 announcement = ", ".join(detected_speech)
-                tts_engine.say(announcement)
-                tts_engine.runAndWait()
+                tts_handler.say(announcement)
             elif command_value == "clearance":
                 clearances = analyze_path_clearance(get_frame_width(), detected_objects)
                 
@@ -926,8 +992,7 @@ while True:
                         clear_paths.append(f"{zone} path clear for {int(distance)} centimeters")
                 
                 announcement = ". ".join(clear_paths)
-                tts_engine.say(announcement)
-                tts_engine.runAndWait()
+                tts_handler.say(announcement)
 
         # Handle navigation mode
         if current_mode == "navigation":
@@ -999,16 +1064,13 @@ while True:
                         announcements = [announcement]
                     
                     if announcements:
-                        tts_engine.say(". ".join(announcements))
-                        tts_engine.runAndWait()
+                        tts_handler.say(". ".join(announcements))
                         last_announcement_time = current_time
                     
-                    # Play spatial audio based on urgency - Fixed: use navigation_threats instead of top_threats
-                    for threat in navigation_threats[:NAVIGATION_SETTINGS['max_threats']]:
-                        if threat['urgency'] == "immediate":
-                            play_spatial_sound(sounds['warning'], threat['coords'][0], threat['distance'])
-                        elif threat['urgency'] == "caution":
-                            play_spatial_sound(sounds['proximity'], threat['coords'][0], threat['distance'])
+                    # Remove the audio feedback section completely
+                    if announcements:
+                        tts_handler.say(". ".join(announcements))
+                        last_announcement_time = current_time
             
             # Draw navigation visualization
             draw_navigation_overlay(processed_frame, navigation_threats)
@@ -1036,10 +1098,6 @@ while True:
                          (0, 255, 0, 0.3),  # Green with transparency
                          2)
 
-        # Update previous frame for motion detection
-        motion_detector.previous_frame = processed_frame.copy()
-        frame_count += 1
-
         # Periodic memory cleanup
         if frame_count % 100 == 0:
             clear_memory()
@@ -1063,6 +1121,11 @@ while True:
         # Add small delay between frames
         time.sleep(0.01)
 
+        # Add frame protection in the main loop
+        if tts_handler.is_speaking:
+            # Skip heavy processing while speaking
+            time.sleep(0.01)
+            continue
 
         # Face recognition
         if FACE_RECOGNITION_AVAILABLE and frame_count % FACE_SETTINGS['check_interval'] == 0:
@@ -1082,8 +1145,7 @@ while True:
                         x_center = face['center'][0]
                         position = get_position(left, right, get_frame_width())
                         announcement = f"Recognized {face['name']} {position}"
-                        tts_engine.say(announcement)
-                        tts_engine.runAndWait()
+                        tts_handler.say(announcement)
                         face_manager.last_face_announcement = current_time
             except Exception as e:
                 if FACE_RECOGNITION_AVAILABLE:  # Only print once
@@ -1097,6 +1159,228 @@ while True:
         continue
 
 # Cleanup
+tts_handler.stop()
+audio_manager.stop()
 voice_handler.stop()
 camera.release()
 cv2.destroyAllWindows()
+
+# Update FACE_SETTINGS
+FACE_SETTINGS = {
+    'database_path': 'assets/faces',
+    'recognition_threshold': 0.6,     # More strict matching
+    'min_face_size': 30,             # Increased minimum size
+    'check_interval': 2,             # Check more frequently
+    'announcement_cooldown': 3.0,     # More frequent announcements
+    'tracking_timeout': 1.0,         # How long to track a face
+    'min_detections': 3,             # Minimum detections before announcing
+    'position_threshold': 0.2        # Position change threshold for re-announcing
+}
+
+class FaceRecognitionHandler:
+    def __init__(self, database_path):
+        self.database_path = database_path
+        self.known_faces = {}
+        self.known_encodings = {}
+        self.face_locations = {}  # Track face locations over time
+        self.face_timestamps = {} # Track when faces were last seen
+        self.face_detection_count = {} # Count consistent detections
+        self.last_announcement = 0
+        self.enabled = FACE_RECOGNITION_AVAILABLE
+        
+        if self.enabled:
+            self.load_known_faces()
+        else:
+            print("Face recognition disabled - module not available")
+
+    def load_known_faces(self):
+        """Load and encode known faces from database"""
+        if not os.path.exists(self.database_path):
+            os.makedirs(self.database_path)
+            return
+
+        try:
+            for face_file in os.listdir(self.database_path):
+                if face_file.endswith(('.jpg', '.png')):
+                    name = os.path.splitext(face_file)[0]
+                    image_path = os.path.join(self.database_path, face_file)
+                    face_image = face_recognition.load_image_file(image_path)
+                    
+                    # Get face locations first
+                    face_locs = face_recognition.face_locations(face_image)
+                    if not face_locs:
+                        print(f"No face found in {face_file}")
+                        continue
+                    
+                    # Use the first face found
+                    encoding = face_recognition.face_encodings(face_image, [face_locs[0]])[0]
+                    self.known_faces[name] = face_image
+                    self.known_encodings[name] = encoding
+                    print(f"Loaded face: {name}")
+                    
+        except Exception as e:
+            print(f"Error loading face database: {e}")
+            self.enabled = False
+
+    def cleanup_old_tracks(self, current_time):
+        """Remove old face tracks"""
+        for name in list(self.face_timestamps.keys()):
+            if current_time - self.face_timestamps[name] > FACE_SETTINGS['tracking_timeout']:
+                self.face_locations.pop(name, None)
+                self.face_timestamps.pop(name, None)
+                self.face_detection_count.pop(name, None)
+
+    def process_frame(self, frame, current_time):
+        """Process a frame to detect and recognize faces"""
+        if not self.enabled:
+            return []
+
+        try:
+            # Only detect faces every check_interval frames
+            face_locations = face_recognition.face_locations(frame)
+            if not face_locations:
+                self.cleanup_old_tracks(current_time)
+                return []
+
+            face_encodings = face_recognition.face_encodings(frame, face_locations)
+            found_faces = []
+
+            for face_encoding, (top, right, bottom, left) in zip(face_encodings, face_locations):
+                # Check face size
+                face_height = bottom - top
+                if face_height < FACE_SETTINGS['min_face_size']:
+                    continue
+
+                # Compare with known faces
+                matches = face_recognition.compare_faces(
+                    list(self.known_encodings.values()),
+                    face_encoding,
+                    tolerance=FACE_SETTINGS['recognition_threshold']
+                )
+                
+                if True in matches:
+                    name = list(self.known_faces.keys())[matches.index(True)]
+                    face_center = ((left + right) // 2, (top + bottom) // 2)
+                    
+                    # Update tracking
+                    if name in self.face_locations:
+                        # Check if position has changed significantly
+                        prev_center = self.face_locations[name]
+                        if dist.euclidean(prev_center, face_center) < FACE_SETTINGS['position_threshold'] * frame.shape[1]:
+                            self.face_detection_count[name] = self.face_detection_count.get(name, 0) + 1
+                    
+                    self.face_locations[name] = face_center
+                    self.face_timestamps[name] = current_time
+                    
+                    # Only add faces that have been consistently detected
+                    if self.face_detection_count.get(name, 0) >= FACE_SETTINGS['min_detections']:
+                        found_faces.append({
+                            'name': name,
+                            'location': (left, top, right, bottom),
+                            'center': face_center,
+                            'confidence': 1.0 - dist.euclidean(
+                                face_encoding,
+                                self.known_encodings[name]
+                            ) / 2
+                        })
+
+            self.cleanup_old_tracks(current_time)
+            return found_faces
+
+        except Exception as e:
+            if self.enabled:
+                print(f"Error in face recognition: {e}")
+                self.enabled = False
+            return []
+
+# Initialize face handler (replace old face_manager initialization)
+face_handler = FaceRecognitionHandler(FACE_SETTINGS['database_path'])
+
+# ...existing code...
+
+# Update the face recognition section in the main loop:
+if FACE_RECOGNITION_AVAILABLE and frame_count % FACE_SETTINGS['check_interval'] == 0:
+    current_time = time.time()
+    found_faces = face_handler.process_frame(processed_frame, current_time)
+    
+    for face in found_faces:
+        # Draw face box
+        left, top, right, bottom = face['location']
+        confidence = int(face['confidence'] * 100)
+        cv2.rectangle(processed_frame, (left, top), (right, bottom), (0, 255, 0), 2)
+        cv2.putText(processed_frame, f"{face['name']} ({confidence}%)", 
+                    (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        # Announce recognized faces
+        if current_time - face_handler.last_announcement > FACE_SETTINGS['announcement_cooldown']:
+            position_str, _ = get_position(left, right, get_frame_width())
+            # announcement = f"Recognized {face['name']} {position_str}"
+            announcement = f"{['name']} is {position_str}, {confidence}% confident"
+            tts_handler.say(announcement)
+            face_handler.last_announcement = current_time
+
+# ...existing code...
+
+# Add face position guidance settings after FACE_SETTINGS
+FACE_POSITION_GUIDANCE = {
+    'center_threshold': 0.1,  # 10% from center is considered "in front"
+    'zones': [
+        (-1.0, -0.5, "far to your left"),
+        (-0.5, -0.2, "to your left"),
+        (-0.2, -0.1, "slightly to your left"),
+        (-0.1, 0.1, "in front of you"),
+        (0.1, 0.2, "slightly to your right"),
+        (0.2, 0.5, "to your right"),
+        (0.5, 1.0, "far to your right")
+    ]
+}
+
+def format_face_guidance(face, frame_width):
+    """Format face recognition announcement with natural position guidance"""
+    x_center = face['center'][0]
+    # Calculate normalized position (-1 to 1, where 0 is center)
+    relative_pos = (x_center - frame_width/2) / (frame_width/2)
+    
+    # Get position description
+    position = "in front of you"  # default
+    for start, end, desc in FACE_POSITION_GUIDANCE['zones']:
+        if start <= relative_pos <= end:
+            position = desc
+            break
+    
+    # Format confidence as percentage without decimal
+    confidence = int(face['confidence'] * 100)
+    
+    # Format distance if available
+    distance_str = ""
+    if 'distance' in face:
+        dist = face['distance']
+        if dist < 100:
+            distance_str = "very close, "
+        elif dist < 200:
+            distance_str = "nearby, "
+        
+    return f"{face['name']} is {distance_str}{position}, {confidence}% confident"
+
+# ...existing code...
+
+# Replace the face recognition announcement section in the main loop
+if FACE_RECOGNITION_AVAILABLE and frame_count % FACE_SETTINGS['check_interval'] == 0:
+    current_time = time.time()
+    found_faces = face_handler.process_frame(processed_frame, current_time)
+    
+    for face in found_faces:
+        # Draw face box
+        left, top, right, bottom = face['location']
+        confidence = int(face['confidence'] * 100)
+        cv2.rectangle(processed_frame, (left, top), (right, bottom), (0, 255, 0), 2)
+        cv2.putText(processed_frame, f"{face['name']} ({confidence}%)", 
+                    (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        # Announce recognized faces with improved guidance
+        if current_time - face_handler.last_announcement > FACE_SETTINGS['announcement_cooldown']:
+            announcement = format_face_guidance(face, get_frame_width())
+            tts_handler.say(announcement)
+            face_handler.last_announcement = current_time
+
+# ...existing code...
