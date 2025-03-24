@@ -16,6 +16,8 @@ import os  # Add os import
 from queue import Queue
 from threading import Thread
 import pathlib
+import pytesseract
+from PIL import Image
 
 # import face_recognition  # Add at top with other imports
 global _results
@@ -129,6 +131,21 @@ FACE_SETTINGS = {
     'min_face_size': 20,             # Minimum face size in pixels
     'check_interval': 3,             # Check every N frames
     'announcement_cooldown': 5.0      # Seconds between face announcements
+}
+
+# Add text recognition settings after other settings
+TEXT_RECOGNITION_SETTINGS = {
+    'cooldown': 2.0,  # seconds between text recognition attempts
+    'min_confidence': 60,  # minimum confidence for OCR
+    'min_text_size': 20,  # minimum text height in pixels
+    'last_read_time': 0,
+    'preprocessing': True,  # enable image preprocessing for better OCR
+    'highlight_color': (0, 255, 0),  # Green for text boxes
+    'font_scale': 0.6,
+    'text_thickness': 2,
+    'box_thickness': 2,
+    'language': 'eng',  # OCR language
+    'max_text_angle': 30  # maximum text rotation angle to detect
 }
 
 # Add spatial audio feedback
@@ -390,13 +407,15 @@ class VoiceCommandHandler:
                     command = self.recognizer.recognize_google(audio).lower()
                     connection_errors = 0  # Reset error count on success
                     
-                    # Enhanced command recognition
-                    if any(word in command for word in ["walk", "walking", "start walking"]):
-                        self.command_queue.put(("mode", "walking"))
-                        self._play_feedback('command_recognized')
-                    elif any(word in command for word in ["idle", "stop", "stop walking"]):  # Changed "normal" to "idle"
+                    # Enhanced command recognition with priority to stop/idle commands
+                    if any(word in command for word in ["idle", "stop", "stop navigation"]):
                         self.command_queue.put(("mode", "idle"))
                         self._play_feedback('command_recognized')
+                    elif any(word in command for word in ["navigate", "navigation", "guide", "guide me", "walk", "walking"]):
+                        self.command_queue.put(("mode", "navigation"))
+                        self._play_feedback('command_recognized')
+                    
+                    # Rest of command handling
                     elif any(phrase in command for phrase in ["what's around", "what is around", "describe", "tell me"]):
                         self.command_queue.put(("action", "describe"))
                         self._play_feedback('command_recognized')
@@ -409,6 +428,10 @@ class VoiceCommandHandler:
                     # Add face detection command
                     if any(phrase in command for phrase in ["detect faces", "recognize faces", "who is there"]):
                         self.command_queue.put(("action", "detect_faces"))
+                        self._play_feedback('command_recognized')
+                    # Add text reading command
+                    elif "read text" in command or "read this" in command or "read screen" in command:
+                        self.command_queue.put(("action", "read_text"))
                         self._play_feedback('command_recognized')
                     
                 except sr.RequestError as e:
@@ -447,7 +470,7 @@ pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
 
 # Initialize components
 tts_engine = pyttsx3.init()
-tts_engine.setProperty('rate', 200)
+tts_engine.setProperty('rate', 250)
 
 # Optimize model loading for Raspberry Pi
 def load_optimized_model():
@@ -624,7 +647,17 @@ NAVIGATION_SETTINGS = {
     },
     'path_width': 100,    # cm - typical path width
     'clear_path_threshold': 200,  # cm - minimum safe distance for clear path
-    'block_threshold': 0.7   # 70% of frame area must be blocked to trigger warning
+    'block_threshold': 0.7,   # 70% of frame area must be blocked to trigger warning
+    'zones': {
+        'left': (0, 0.35),       # 0-35% of frame width for left zone
+        'center': (0.35, 0.65),  # 35-65% of frame width for center zone
+        'right': (0.65, 1.0)     # 65-100% of frame width for right zone
+    },
+    'zone_labels': {
+        'left': 'on your left side',
+        'center': 'directly ahead',
+        'right': 'on your right side'
+    }
 }
 
 def calculate_navigation_metrics(x_center, frame_width, distance, obj_width):
@@ -657,56 +690,47 @@ def calculate_navigation_metrics(x_center, frame_width, distance, obj_width):
         'time_to_collision': time_to_collision
     }
 
+def get_object_zone(x_center, frame_width):
+    """Determine which zone an object is in based on its x position"""
+    relative_pos = x_center / frame_width
+    
+    # Hard threshold checks to ensure no ambiguity
+    if relative_pos < NAVIGATION_SETTINGS['zones']['left'][1]:
+        return 'left', NAVIGATION_SETTINGS['zone_labels']['left']
+    elif relative_pos > NAVIGATION_SETTINGS['zones']['right'][0]:
+        return 'right', NAVIGATION_SETTINGS['zone_labels']['right']
+    else:
+        return 'center', NAVIGATION_SETTINGS['zone_labels']['center']
+
 def get_enhanced_navigation_guidance(x_center, frame_width, distance, obj_width=0):
-    """Improved directional guidance with more natural language"""
-    metrics = calculate_navigation_metrics(x_center, frame_width, distance, obj_width)
-    angle = metrics['angle']
+    """Improved directional guidance with clearer zones"""
+    zone, position = get_object_zone(x_center, frame_width)
     
-    # Determine direction more naturally
-    if abs(angle) < 5:  # Narrower center threshold
-        direction = "continue straight ahead"
-    else:
-        # More natural turning instructions
-        if abs(angle) < 15:
-            intensity = "slightly"
-        elif abs(angle) < 30:
-            intensity = "gradually"
-        elif abs(angle) < 45:
-            intensity = ""  # No intensity for medium turns
-        else:
-            intensity = "sharply"
-        
-        turn_direction = "right" if angle < 0 else "left"
-        direction = f"turn {intensity} {turn_direction}".strip()
-    
-    # Enhanced distance context
+    # Distance context first
     if distance < 50:
-        distance_context = "very close"
+        distance_str = "very close"
         urgency = "stop immediately"
-    elif distance < 150:
-        distance_context = "close"
+    elif distance < 100:
+        distance_str = "close"
         urgency = "slow down"
-    elif distance < 300:
-        distance_context = f"{distance} centimeters ahead"
-        urgency = ""
     else:
-        distance_context = f"about {round(distance/100)} meters ahead"
+        distance_str = f"{distance} centimeters away"
         urgency = ""
     
-    # Construct clearer guidance
-    guidance = f"Object {distance_context}"
-    if metrics['lateral_distance'] > 50:  # Only add lateral position if significantly off-center
-        side = "to your left" if angle < 0 else "to your right"
-        guidance += f" {side}"
+    # Build guidance message with clearer zone indication
+    message = f"Object {distance_str} {position}"
     
+    # Add movement suggestion based on zone
     if urgency:
-        guidance = f"{urgency}, {guidance}"
+        message = f"{urgency}, {message}"
+    elif zone == 'left':
+        message += ", move to your right"
+    elif zone == 'right':
+        message += ", move to your left"
+    elif zone == 'center' and distance < 200:
+        message += ", step back"
     
-    # Add action guidance
-    if not urgency:  # Only add direction if not stopping
-        guidance += f", {direction}"
-    
-    return guidance.strip()
+    return message.strip()
 
 def update_navigation_state(navigation_threats):
     """Track navigation state with smarter path blocking detection"""
@@ -799,6 +823,9 @@ def _continuous_listen(self):
                 if any(phrase in command for phrase in ["detect faces", "recognize faces", "who is there"]):
                     self.command_queue.put(("action", "detect_faces"))
                     self._play_feedback('command_recognized')
+                # Add text reading command
+                elif "read text" in command or "read this" in command or "read screen" in command:
+                    self.command_queue.put(("action", "read_text"))
                     
             except (sr.WaitTimeoutError, sr.UnknownValueError):
                 continue
@@ -810,21 +837,33 @@ def _continuous_listen(self):
 VoiceCommandHandler._continuous_listen = _continuous_listen
 
 def draw_navigation_overlay(frame, threats):
-    """Draw enhanced navigation overlay with threat visualization"""
+    """Draw enhanced navigation overlay with clear zone visualization"""
     width = frame.shape[1]
     height = frame.shape[0]
     
-    # Draw center line and safe zone
-    safe_zone_width = int(width * NAVIGATION_SETTINGS['safe_zone_width'])
-    center = width // 2
+    # Draw zone boundaries with labels
+    for zone, (start, end) in NAVIGATION_SETTINGS['zones'].items():
+        x_start = int(start * width)
+        x_end = int(end * width)
+        
+        # Different colors for each zone
+        color = {
+            'left': (0, 0, 255),   # Red for left
+            'center': (0, 255, 0),  # Green for center
+            'right': (255, 0, 0)    # Blue for right
+        }[zone]
+        
+        # Draw zone boundaries
+        cv2.line(frame, (x_start, 0), (x_start, height), color, 2)
+        if zone != 'right':  # Draw right boundary for left and center zones
+            cv2.line(frame, (x_end, 0), (x_end, height), color, 2)
+            
+        # Add zone labels
+        zone_center = int((x_start + x_end) / 2)
+        cv2.putText(frame, zone.upper(), (zone_center - 30, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
     
-    cv2.line(frame, (center, 0), (center, height), (0, 255, 0), 1)
-    cv2.rectangle(frame, 
-                 (center - safe_zone_width//2, 0),
-                 (center + safe_zone_width//2, height),
-                 (0, 255, 0), 1)
-    
-    # Draw threat zones
+    # Draw threats
     for threat in threats:
         x = int(threat['coords'][0])
         y = height - int((threat['distance'] / NAVIGATION_SETTINGS['range']['far']) * height)
@@ -1099,6 +1138,90 @@ last_queue_clear_time = time.time()
 NO_THREAT_ANNOUNCEMENT_INTERVAL = 3.0  # Announce path clear after 3 seconds of no threats
 last_threat_detected_time = time.time()
 
+# Add text recognition settings
+TEXT_RECOGNITION_SETTINGS = {
+    'cooldown': 2.0,  # seconds between text recognition attempts
+    'min_confidence': 50,  # minimum confidence for OCR
+    'min_text_size': 20,  # minimum text height in pixels
+    'last_read_time': 0,
+    'preprocessing': True,  # enable image preprocessing for better OCR
+    'highlight_color': (0, 255, 0),  # Green for text boxes
+    'font_scale': 0.6,
+    'text_thickness': 2,
+    'box_thickness': 2,
+    'language': 'eng',  # OCR language
+    'max_text_angle': 30  # maximum text rotation angle to detect
+}
+
+def enhance_image_for_ocr(image):
+    """Enhance image for better OCR results"""
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Apply adaptive thresholding
+    thresh = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY, 11, 2
+    )
+    
+    # Denoise
+    denoised = cv2.fastNlMeansDenoising(thresh)
+    
+    return denoised
+
+def detect_and_read_text(frame):
+    """Detect text in frame and prepare for reading"""
+    try:
+        # Enhance image
+        if TEXT_RECOGNITION_SETTINGS['preprocessing']:
+            proc_image = enhance_image_for_ocr(frame)
+        else:
+            proc_image = frame
+
+        # Get detailed OCR data
+        data = pytesseract.image_to_data(proc_image, output_type=pytesseract.Output.DICT)
+        
+        texts = []
+        n_boxes = len(data['text'])
+        
+        for i in range(n_boxes):
+            conf = float(data['conf'][i])
+            if conf > TEXT_RECOGNITION_SETTINGS['min_confidence']:
+                text = data['text'][i].strip()
+                if len(text) > 1:  # Filter out single characters
+                    x = data['left'][i]
+                    y = data['top'][i]
+                    w = data['width'][i]
+                    h = data['height'][i]
+                    
+                    if h >= TEXT_RECOGNITION_SETTINGS['min_text_size']:
+                        # Draw text box
+                        cv2.rectangle(frame, (x, y), (x + w, y + h), 
+                                    TEXT_RECOGNITION_SETTINGS['highlight_color'], 
+                                    TEXT_RECOGNITION_SETTINGS['box_thickness'])
+                        
+                        # Add text above box
+                        cv2.putText(frame, text, (x, y - 10),
+                                  cv2.FONT_HERSHEY_SIMPLEX,
+                                  TEXT_RECOGNITION_SETTINGS['font_scale'],
+                                  TEXT_RECOGNITION_SETTINGS['highlight_color'],
+                                  TEXT_RECOGNITION_SETTINGS['text_thickness'])
+                        
+                        texts.append({
+                            'text': text,
+                            'confidence': conf,
+                            'position': (x, y, w, h)
+                        })
+        
+        # Sort text by vertical position (top to bottom)
+        texts.sort(key=lambda x: x['position'][1])
+        
+        return texts
+    
+    except Exception as e:
+        logger.error(f"Error in text recognition: {e}")
+        return []
+
 # Main loop
 while True:
     try:
@@ -1222,9 +1345,16 @@ while True:
         if command_data:
             command_type, command_value = command_data
             if command_type == "mode":
-                # Only switch mode and announce if enough time has passed
-                if current_time - last_mode_switch_time > MODE_SWITCH_COOLDOWN:
-                    if command_value != current_mode:  # Only switch if mode is different
+                # Ensure mode changes are always processed, especially for idle/stop commands
+                if command_value == "idle":
+                    current_mode = command_value
+                    tts_handler.say("Stopping navigation, switching to idle mode")
+                    last_mode_switch_time = current_time
+                    # Clear any pending navigation announcements
+                    tts_handler.clear_all()
+                # Only apply cooldown for other mode changes
+                elif current_time - last_mode_switch_time > MODE_SWITCH_COOLDOWN:
+                    if command_value != current_mode:
                         current_mode = command_value
                         tts_handler.say(f"Switching to {command_value} mode")
                         last_mode_switch_time = current_time
@@ -1251,6 +1381,31 @@ while True:
                     
                     announcement = ". ".join(clear_paths)
                     tts_handler.say(announcement)
+                elif command_value == "read_text":
+                    current_time = time.time()
+                    if current_time - TEXT_RECOGNITION_SETTINGS['last_read_time'] > TEXT_RECOGNITION_SETTINGS['cooldown']:
+                        detected_texts = detect_and_read_text(processed_frame)
+                        if detected_texts:
+                            # Group text by vertical position for more natural reading
+                            text_groups = {}
+                            for text in detected_texts:
+                                location = text['location']
+                                if location not in text_groups:
+                                    text_groups[location] = []
+                                text_groups[location].append(text['text'])
+
+                            # Build announcement with position context
+                            announcements = []
+                            for location in ['top', 'middle', 'bottom']:
+                                if location in text_groups:
+                                    text_line = ' '.join(text_groups[location])
+                                    announcements.append(f"At {location} of screen: {text_line}")
+
+                            full_announcement = '. '.join(announcements)
+                            tts_handler.say(f"Detected text: {full_announcement}")
+                        else:
+                            tts_handler.say("No text detected in view")
+                        TEXT_RECOGNITION_SETTINGS['last_read_time'] = current_time
 
         # Handle navigation mode
         if current_mode == "navigation":
