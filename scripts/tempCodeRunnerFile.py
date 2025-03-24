@@ -1043,41 +1043,45 @@ class TextRecognitionHandler:
         }
 
     def format_text_announcement(self, texts):
-        """Format detected text for natural speech output without confidence values"""
+        """Format detected text for natural speech output"""
         if not texts:
             return "No text detected"
         
-        # Sort by confidence but only speak the text content
+        # Sort texts by confidence but only announce the text
         texts.sort(key=lambda x: x['confidence'], reverse=True)
-        # Filter high confidence texts and only include text content
-        lines = [text['text'] for text in texts if text['confidence'] >= TEXT_RECOGNITION_SETTINGS['min_confidence']]
         
-        # Join with proper punctuation 
-        return " ".join(lines)
+        # Only include the text content, no confidence values
+        lines = [text['text'] for text in texts]
+        return ". ".join(lines)
 
     def format_book_text(self, texts):
-        """Format book text for natural reading without confidence values"""
+        """Format book text for natural reading"""
         if not texts:
             return "No text detected on page"
         
-        # Process lines while maintaining reading order
+        # Combine texts in reading order without confidence values
         lines = []
         current_line = []
         last_y = None
         
         for text in texts:
             current_y = text['y_position']
+            
+            # Check if this is a new line
             if last_y is not None and abs(current_y - last_y) > TEXT_RECOGNITION_SETTINGS['book_mode']['line_spacing']:
                 if current_line:
                     lines.append(' '.join(current_line))
                     current_line = []
-            current_line.append(text['text'])  # Only use text content
+            
+            # Only add the text content
+            current_line.append(text['text'])
             last_y = current_y
         
+        # Add last line
         if current_line:
             lines.append(' '.join(current_line))
         
-        return ' '.join(lines)  # Join all text into one continuous reading
+        return '. '.join(lines)
 
     def visualize_text(self, frame, texts):
         """Draw detected text boxes and content on frame"""
