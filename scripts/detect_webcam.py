@@ -15,7 +15,11 @@ import psutil
 import os  # Add os import
 from queue import Queue
 from threading import Thread
+<<<<<<< HEAD
 import easyocr  # Add this import
+=======
+import pathlib
+>>>>>>> cf63e8fc11ccf56d6a6756d9bb437283f8e8f852
 
 # import face_recognition  # Add at top with other imports
 global _results
@@ -28,12 +32,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+<<<<<<< HEAD
 
 
 # Add sound settings
 SOUND_COOLDOWN = 2.0  # seconds between sound alerts
 DISTANCE_THRESHOLD_NORMAL = 200  # cm - distance threshold for normal mode
 PRIORITY_THRESHOLD_NORMAL = 6  # minimum priority score for alerts in normal mode
+=======
+# Add sound settings (update cooldown)
+SOUND_COOLDOWN = 3.0  # Increased from 2.0 to 3.0 seconds between sound alerts
+DISTANCE_THRESHOLD_NORMAL = 150  # Reduced from 200 to 150cm for less frequent alerts
+PRIORITY_THRESHOLD_NORMAL = 7  # Increased from 6 to 7 for higher threshold
+>>>>>>> cf63e8fc11ccf56d6a6756d9bb437283f8e8f852
 
 # Platform-specific imports
 IS_RASPBERRY_PI = False
@@ -48,10 +59,10 @@ except ImportError:
     GPIO = None
 
 # Optimization settings for Raspberry Pi
-FRAME_WIDTH = 320  # Further reduced from 416
-FRAME_HEIGHT = 240  # Further reduced from 320
-FRAME_RATE = 5  # Further reduced from 10
-SKIP_FRAMES = 3  # Process every 3rd frame
+FRAME_WIDTH = 768  # Further reduced from 416
+FRAME_HEIGHT = 576  # Further reduced from 320
+FRAME_RATE = 10  # Further reduced from 10
+SKIP_FRAMES = 2  # Process every 3rd frame
 MAX_OBJECTS = 5  # Limit number of objects to track
 BATCH_SIZE = 1  # Process single frame at a time
 
@@ -61,17 +72,67 @@ FORCE_GC_THRESHOLD = 850  # MB, force cleanup at higher threshold
 
 # Enhanced threat definitions with more context
 THREAT_OBJECTS = {
+    # Outdoor moving threats (high priority)
     'person': {'safe_distance': 200, 'priority': 5, 'motion_sensitive': True},
-    'car': {'safe_distance': 500, 'priority': 8, 'motion_sensitive': True},
-    'motorcycle': {'safe_distance': 400, 'priority': 7, 'motion_sensitive': True},
+    'car': {'safe_distance': 700, 'priority': 8, 'motion_sensitive': True},
+    'motorcycle': {'safe_distance': 500, 'priority': 7, 'motion_sensitive': True},
     'bicycle': {'safe_distance': 300, 'priority': 6, 'motion_sensitive': True},
-    'truck': {'safe_distance': 500, 'priority': 8, 'motion_sensitive': True},
+    'truck': {'safe_distance': 800, 'priority': 8, 'motion_sensitive': True},
+    'bus': {'safe_distance': 800, 'priority': 8, 'motion_sensitive': True},
+    'dog': {'safe_distance': 200, 'priority': 6, 'motion_sensitive': True},
+    
+    # Outdoor static obstacles
     'pole': {'safe_distance': 150, 'priority': 4, 'motion_sensitive': False},
     'fire hydrant': {'safe_distance': 100, 'priority': 3, 'motion_sensitive': False},
     'stop sign': {'safe_distance': 150, 'priority': 4, 'motion_sensitive': False},
+    'traffic light': {'safe_distance': 150, 'priority': 4, 'motion_sensitive': False},
     'bench': {'safe_distance': 150, 'priority': 3, 'motion_sensitive': False},
+    'mailbox': {'safe_distance': 100, 'priority': 3, 'motion_sensitive': False},
+    'tree': {'safe_distance': 150, 'priority': 4, 'motion_sensitive': False},
+    'potted plant': {'safe_distance': 100, 'priority': 3, 'motion_sensitive': False},
+    
+    # Road/Path hazards (high priority)
     'hole': {'safe_distance': 200, 'priority': 7, 'motion_sensitive': False},
     'stairs': {'safe_distance': 200, 'priority': 6, 'motion_sensitive': False},
+    'curb': {'safe_distance': 100, 'priority': 5, 'motion_sensitive': False},
+    'puddle': {'safe_distance': 150, 'priority': 5, 'motion_sensitive': False},
+    
+    # Indoor furniture
+    'chair': {'safe_distance': 100, 'priority': 3, 'motion_sensitive': False},
+    'couch': {'safe_distance': 150, 'priority': 4, 'motion_sensitive': False},
+    'sofa': {'safe_distance': 150, 'priority': 4, 'motion_sensitive': False},
+    'bed': {'safe_distance': 150, 'priority': 4, 'motion_sensitive': False},
+    'dining table': {'safe_distance': 150, 'priority': 4, 'motion_sensitive': False},
+    'coffee table': {'safe_distance': 100, 'priority': 4, 'motion_sensitive': False},
+    'desk': {'safe_distance': 120, 'priority': 4, 'motion_sensitive': False},
+    'bookshelf': {'safe_distance': 120, 'priority': 4, 'motion_sensitive': False},
+    
+    # Indoor obstacles/openings
+    'door': {'safe_distance': 120, 'priority': 5, 'motion_sensitive': True},  # True because doors can move
+    'cabinet': {'safe_distance': 100, 'priority': 3, 'motion_sensitive': False},
+    'refrigerator': {'safe_distance': 150, 'priority': 4, 'motion_sensitive': False},
+    'sink': {'safe_distance': 100, 'priority': 3, 'motion_sensitive': False},
+    'toilet': {'safe_distance': 100, 'priority': 3, 'motion_sensitive': False},
+    'bathtub': {'safe_distance': 150, 'priority': 4, 'motion_sensitive': False},
+    'window': {'safe_distance': 100, 'priority': 4, 'motion_sensitive': False},
+    
+    # Temporary obstacles
+    'box': {'safe_distance': 100, 'priority': 3, 'motion_sensitive': False},
+    'suitcase': {'safe_distance': 100, 'priority': 3, 'motion_sensitive': False},
+    'bag': {'safe_distance': 80, 'priority': 2, 'motion_sensitive': False},
+    'backpack': {'safe_distance': 80, 'priority': 2, 'motion_sensitive': False},
+    
+    # Electronics/Appliances
+    'tv': {'safe_distance': 120, 'priority': 3, 'motion_sensitive': False},
+    'laptop': {'safe_distance': 80, 'priority': 2, 'motion_sensitive': False},
+    'microwave': {'safe_distance': 100, 'priority': 3, 'motion_sensitive': False},
+    'oven': {'safe_distance': 150, 'priority': 5, 'motion_sensitive': False},
+    
+    # Construction/Maintenance
+    'ladder': {'safe_distance': 150, 'priority': 5, 'motion_sensitive': False},
+    'toolbox': {'safe_distance': 100, 'priority': 3, 'motion_sensitive': False},
+    'trash can': {'safe_distance': 100, 'priority': 2, 'motion_sensitive': False},
+    'construction barrier': {'safe_distance': 200, 'priority': 6, 'motion_sensitive': False},
 }
 
 # Add Face Recognition Settings after other settings
@@ -103,6 +164,7 @@ TEXT_RECOGNITION_SETTINGS = {
 
 # Add spatial audio feedback
 def init_audio():
+<<<<<<< HEAD
     pygame.mixer.init()
     pygame.mixer.set_num_channels(8)
     audio_path = "assets/audio"
@@ -121,6 +183,36 @@ def init_audio():
             sounds[sound_name] = None
     
     return sounds
+=======
+    """Initialize audio with fallback paths and error handling"""
+    try:
+        pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+        pygame.mixer.set_num_channels(8)
+        
+        # Get absolute path to audio files
+        base_path = pathlib.Path(__file__).parent.parent / "assets" / "audio"
+        
+        sounds = {}
+        required_sounds = {
+            'warning': 'warning.wav',
+            'proximity': 'proximity.wav', 
+            'direction': 'direction.wav'
+        }
+        
+        for sound_name, filename in required_sounds.items():
+            sound_path = base_path / filename
+            try:
+                sounds[sound_name] = pygame.mixer.Sound(str(sound_path))
+            except Exception as e:
+                logger.warning(f"Could not load sound {sound_name}: {e}")
+                # Create silent sound as fallback
+                sounds[sound_name] = pygame.mixer.Sound(buffer=bytes([0]*44100))
+        
+        return sounds
+    except Exception as e:
+        logger.error(f"Failed to initialize audio: {e}")
+        return None
+>>>>>>> cf63e8fc11ccf56d6a6756d9bb437283f8e8f852
 
 # Move global declarations to top level
 _frame = None
@@ -283,7 +375,7 @@ def get_navigation_guidance(x_center, frame_width):
 
 def get_urgency_level(distance):
     """Determine urgency of navigation guidance"""
-    if distance < 100:
+    if distance < 50:
         return "immediate", 1.0
     elif distance < 200:
         return "caution", 0.7
@@ -297,16 +389,25 @@ class VoiceCommandHandler:
         self.stop_event = Event()
         self.listen_thread = None
         
-        # Initialize pygame mixer first
+        # Initialize feedback sounds with error handling
         try:
             if not pygame.mixer.get_init():
                 pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
-            self.feedback_sounds = {
-                'command_recognized': pygame.mixer.Sound('assets/audio/recognized.wav'),
-                'error': pygame.mixer.Sound('assets/audio/error.wav')
-            }
+            
+            base_path = pathlib.Path(__file__).parent.parent / "assets" / "audio"
+            
+            self.feedback_sounds = {}
+            for sound_name in ['recognized', 'error']:
+                try:
+                    sound_path = base_path / f"{sound_name}.wav"
+                    self.feedback_sounds[sound_name] = pygame.mixer.Sound(str(sound_path))
+                except Exception as e:
+                    logger.warning(f"Could not load {sound_name} sound: {e}")
+                    # Create silent sound as fallback
+                    self.feedback_sounds[sound_name] = pygame.mixer.Sound(buffer=bytes([0]*44100))
+                    
         except Exception as e:
-            print(f"Warning: Could not initialize audio feedback: {e}")
+            logger.warning(f"Could not initialize audio feedback: {e}")
             self.feedback_sounds = None
 
         self.text_recognition_active = False
@@ -325,22 +426,31 @@ class VoiceCommandHandler:
         self.listen_thread.start()
         
     def _continuous_listen(self):
+        MAX_RETRIES = 3
+        RETRY_DELAY = 2
+        connection_errors = 0
+        
         with sr.Microphone() as source:
             print("Calibrating for ambient noise...")
-            self.recognizer.adjust_for_ambient_noise(source, duration=2)
-            print("Voice command system ready!")
+            try:
+                self.recognizer.adjust_for_ambient_noise(source, duration=2)
+                print("Voice command system ready!")
+            except Exception as e:
+                logger.error(f"Error during calibration: {e}")
+                print("Failed to calibrate microphone, continuing with defaults")
             
             while not self.stop_event.is_set():
                 try:
                     audio = self.recognizer.listen(source, phrase_time_limit=2)
                     command = self.recognizer.recognize_google(audio).lower()
+                    connection_errors = 0  # Reset error count on success
                     
                     # Enhanced command recognition
                     if any(word in command for word in ["walk", "walking", "start walking"]):
                         self.command_queue.put(("mode", "walking"))
                         self._play_feedback('command_recognized')
-                    elif any(word in command for word in ["normal", "stop", "stop walking"]):
-                        self.command_queue.put(("mode", "normal"))
+                    elif any(word in command for word in ["idle", "stop", "stop walking"]):  # Changed "normal" to "idle"
+                        self.command_queue.put(("mode", "idle"))
                         self._play_feedback('command_recognized')
                     elif any(phrase in command for phrase in ["what's around", "what is around", "describe", "tell me"]):
                         self.command_queue.put(("action", "describe"))
@@ -349,6 +459,7 @@ class VoiceCommandHandler:
                         self.command_queue.put(("action", "clearance"))
                     if any(word in command for word in ["navigate", "navigation", "guide me"]):
                         self.command_queue.put(("mode", "navigation"))
+<<<<<<< HEAD
                     # Add text recognition commands
                     if any(phrase in command for phrase in ["read text", "read this", "what does it say"]):
                         self.command_queue.put(("action", "read_text"))
@@ -359,15 +470,33 @@ class VoiceCommandHandler:
                     # Add book reading commands
                     if any(phrase in command for phrase in ["read book", "start reading book"]):
                         self.command_queue.put(("mode", "book"))
+=======
+                    if "where should I go" in command or "which way" in command:
+                        self.command_queue.put(("action", "path_query"))
+                    # Add face detection command
+                    if any(phrase in command for phrase in ["detect faces", "recognize faces", "who is there"]):
+                        self.command_queue.put(("action", "detect_faces"))
+>>>>>>> cf63e8fc11ccf56d6a6756d9bb437283f8e8f852
                         self._play_feedback('command_recognized')
                     
-                except sr.WaitTimeoutError:
-                    continue
+                except sr.RequestError as e:
+                    connection_errors += 1
+                    logger.error(f"Network error in voice recognition: {e}")
+                    if connection_errors >= MAX_RETRIES:
+                        logger.warning("Multiple connection failures, waiting longer...")
+                        time.sleep(RETRY_DELAY * 2)
+                        connection_errors = 0
+                    else:
+                        time.sleep(RETRY_DELAY)
                 except sr.UnknownValueError:
                     continue
+                except ConnectionError as e:
+                    logger.error(f"Connection forcibly closed: {e}")
+                    time.sleep(RETRY_DELAY)
                 except Exception as e:
-                    print(f"Error in voice recognition: {e}")
+                    logger.error(f"Error in voice recognition: {e}")
                     self._play_feedback('error')
+                    time.sleep(1)  # Brief delay before retry
                     continue
     
     def get_command(self):
@@ -386,19 +515,27 @@ pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
 
 # Initialize components
 tts_engine = pyttsx3.init()
-tts_engine.setProperty('rate', 150)
+tts_engine.setProperty('rate', 200)
 
 # Optimize model loading for Raspberry Pi
 def load_optimized_model():
     try:
         if IS_RASPBERRY_PI:
+<<<<<<< HEAD
             model = YOLO('yolov8n.pt')
+=======
+            model = YOLO('yolo11n.pt', task='detect')  # Explicitly set task
+>>>>>>> cf63e8fc11ccf56d6a6756d9bb437283f8e8f852
             model.cpu()
             torch.set_num_threads(1)
             model.model.half()
             torch.set_default_tensor_type(torch.HalfTensor)
         else:
+<<<<<<< HEAD
             model = YOLO('yolov8n.pt')
+=======
+            model = YOLO('yolo11n.pt', task='detect')
+>>>>>>> cf63e8fc11ccf56d6a6756d9bb437283f8e8f852
             if torch.cuda.is_available():
                 model.to('cuda')
             else:
@@ -526,7 +663,7 @@ KNOWN_WIDTH = 45  # cm (average human width)
 FOCAL_LENGTH = 700  # Experimentally determined (adjust if needed)
 
 # Add mode tracking
-current_mode = "normal"
+current_mode = "idle"  # Changed from "normal" to "idle"
 last_announcement_time = time.time()
 last_sound_time = time.time()  # Add this line
 ANNOUNCEMENT_COOLDOWN = 2  # seconds
@@ -538,18 +675,21 @@ previous_threats = []
 environment_check_interval = 30  # frames
 frame_count = 0
 
-# Enhanced Navigation Mode Settings
+# Enhanced Navigation Mode Settings (update thresholds)
 NAVIGATION_SETTINGS = {
-    'announcement_cooldown': 1.2,  # Faster updates for smoother guidance
-    'conf_threshold': 0.35,  # Higher confidence for more reliable detection
+    'announcement_cooldown': 2.0,  # Increased from 1.2 to 2.0
+    'moving_cooldown': 1.5,           # Shorter cooldown for moving threats
+    'stationary_cooldown': 3.0,       # Longer cooldown for stationary objects
+    'conf_threshold': 0.90,  # Increased from 0.35 to 0.75 for more confident detections
     'range': {
+        'very_close': 40,    # cm
         'immediate': 100,    # cm
-        'close': 200,
-        'medium': 350,
-        'far': 500
+        'close': 150,       # Reduced from 200 to 150
+        'medium': 300,      # Reduced from 350 to 300
+        'far': 450         # Reduced from 500 to 450
     },
-    'max_threats': 2,  # Reduced for clearer guidance
-    'priority_threshold': 6,
+    'max_threats': 2,
+    'priority_threshold': 7,  # Increased from 6 to 7
     'safe_zone_width': 0.15,  # Narrower safe zone for precise navigation
     'angle_thresholds': {
         'center': 10,      # degrees
@@ -558,7 +698,8 @@ NAVIGATION_SETTINGS = {
         'significant': 50
     },
     'path_width': 100,    # cm - typical path width
-    'clearance_threshold': 150  # cm - minimum safe clearance
+    'clear_path_threshold': 200,  # cm - minimum safe distance for clear path
+    'block_threshold': 0.7   # 70% of frame area must be blocked to trigger warning
 }
 
 def calculate_navigation_metrics(x_center, frame_width, distance, obj_width):
@@ -614,7 +755,7 @@ def get_enhanced_navigation_guidance(x_center, frame_width, distance, obj_width=
         direction = f"turn {intensity} {turn_direction}".strip()
     
     # Enhanced distance context
-    if distance < 100:
+    if distance < 50:
         distance_context = "very close"
         urgency = "stop immediately"
     elif distance < 150:
@@ -643,28 +784,64 @@ def get_enhanced_navigation_guidance(x_center, frame_width, distance, obj_width=
     return guidance.strip()
 
 def update_navigation_state(navigation_threats):
-    """Track navigation state for smoother guidance"""
+    """Track navigation state with smarter path blocking detection"""
     global previous_guidance, path_blocked
     
-    # Check if path is blocked
-    center_threats = [t for t in navigation_threats if abs(t['coords'][0] - get_frame_width()/2) < 
-                     NAVIGATION_SETTINGS['safe_zone_width'] * get_frame_width()]
+    # Get frame dimensions
+    frame_width = get_frame_width()
+    safe_zone_width = NAVIGATION_SETTINGS['safe_zone_width'] * frame_width
     
-    path_blocked = any(t['distance'] < NAVIGATION_SETTINGS['range']['close'] for t in center_threats)
+    # Analyze zones
+    left_zone = []
+    center_zone = []
+    right_zone = []
     
-    # Find best alternative path
-    if path_blocked:
-        left_threats = [t for t in navigation_threats if t['coords'][0] < get_frame_width()/2]
-        right_threats = [t for t in navigation_threats if t['coords'][0] > get_frame_width()/2]
-        
-        left_clearance = min([t['distance'] for t in left_threats], default=float('inf'))
-        right_clearance = min([t['distance'] for t in right_threats], default=float('inf'))
-        
-        if left_clearance > right_clearance:
-            return "path blocked, try moving left"
+    for threat in navigation_threats:
+        x_center = threat['coords'][0]
+        if x_center < frame_width/3:
+            left_zone.append(threat)
+        elif x_center > (2 * frame_width/3):
+            right_zone.append(threat)
         else:
-            return "path blocked, try moving right"
-            
+            center_zone.append(threat)
+    
+    # Check if center path is blocked
+    center_blocked = any(
+        t['distance'] < NAVIGATION_SETTINGS['range']['close'] 
+        for t in center_zone
+    )
+    
+    # Check if side paths are blocked
+    left_blocked = all(
+        t['distance'] < NAVIGATION_SETTINGS['range']['close'] 
+        for t in left_zone
+    ) if left_zone else False
+    
+    right_blocked = all(
+        t['distance'] < NAVIGATION_SETTINGS['range']['close'] 
+        for t in right_zone
+    ) if right_zone else False
+    
+    # Determine if path is truly blocked
+    if center_blocked:
+        # Only consider path blocked if both sides are also blocked or nearly blocked
+        if left_blocked and right_blocked:
+            return "Warning! All paths blocked, stop immediately"
+        elif not left_blocked and not right_blocked:
+            # If both sides are clear, suggest the clearer side
+            left_min_dist = min((t['distance'] for t in left_zone), default=float('inf'))
+            right_min_dist = min((t['distance'] for t in right_zone), default=float('inf'))
+            if left_min_dist > right_min_dist:
+                return "Center blocked, move left"
+            else:
+                return "Center blocked, move right"
+        else:
+            # If one side is clear, use that
+            if not left_blocked:
+                return "Move left for clear path"
+            else:
+                return "Move right for clear path"
+    
     return None
 
 # Fix VoiceCommandHandler by modifying the existing class instead of redefining
@@ -683,17 +860,25 @@ def _continuous_listen(self):
                 if any(word in command for word in ["navigate", "navigation", "guide", "guide me", "walk", "walking"]):
                     self.command_queue.put(("mode", "navigation"))
                     self._play_feedback('command_recognized')
-                elif any(word in command for word in ["normal", "stop"]):
-                    self.command_queue.put(("mode", "normal"))
+                elif any(word in command for word in ["idle", "stop"]):  # Changed "normal" to "idle"
+                    self.command_queue.put(("mode", "idle"))
                     self._play_feedback('command_recognized')
                 elif any(phrase in command for phrase in ["what's around", "what is around", "describe", "tell me"]):
                     self.command_queue.put(("action", "describe"))
                     self._play_feedback('command_recognized')
                 elif any(word in command for word in ["clear", "path", "safe distance"]):
                     self.command_queue.put(("action", "clearance"))
+<<<<<<< HEAD
                 # Add text recognition commands
                 if any(phrase in command for phrase in ["read text", "read this", "what does it say"]):
                     self.command_queue.put(("action", "read_text"))
+=======
+                if "where should I go" in command or "which way" in command:
+                    self.command_queue.put(("action", "path_query"))
+                # Add face detection command
+                if any(phrase in command for phrase in ["detect faces", "recognize faces", "who is there"]):
+                    self.command_queue.put(("action", "detect_faces"))
+>>>>>>> cf63e8fc11ccf56d6a6756d9bb437283f8e8f852
                     self._play_feedback('command_recognized')
                     
             except (sr.WaitTimeoutError, sr.UnknownValueError):
@@ -858,6 +1043,12 @@ class TTSHandler:
         self.message_queue.put(None)  # Unblock the worker thread
         self.worker_thread.join(timeout=1)
 
+    def clear_all(self):
+        """Clear all pending messages"""
+        with self.message_queue.mutex:
+            self.message_queue.queue.clear()
+        self.is_speaking = False
+
 # Add audio manager class
 class AudioManager:
     def __init__(self):
@@ -902,6 +1093,7 @@ class AudioManager:
 tts_handler = TTSHandler()
 audio_manager = AudioManager()
 
+<<<<<<< HEAD
 class TextRecognitionHandler:
     def __init__(self):
         try:
@@ -1171,6 +1363,94 @@ try:
 except Exception as e:
     print(f"Failed to initialize text recognition: {e}")
     text_recognition = None
+=======
+# Add this function before the main loop starts
+def detect_moving_threats(navigation_threats):
+    """Identify and prioritize moving threats"""
+    moving_threats = [
+        threat for threat in navigation_threats 
+        if threat['is_moving'] and threat['distance'] < NAVIGATION_SETTINGS['range']['close']
+    ]
+    
+    if moving_threats:
+        closest_moving = min(moving_threats, key=lambda x: x['distance'])
+        return f"Warning! Moving {closest_moving['object']} approaching, {closest_moving['distance']} centimeters {closest_moving['guidance']}"
+    return None
+
+
+def analyze_path_safety(navigation_threats, frame_width, frame_height):
+    """Analyze path safety and provide guidance"""
+    if not navigation_threats:
+        return "Path is completely clear, safe to proceed", "forward"
+
+    # Sort threats by distance and position
+    center_zone = []
+    left_zone = []
+    right_zone = []
+    
+    zone_width = frame_width / 3
+    for threat in navigation_threats:
+        x_center = threat['coords'][0]
+        if x_center < zone_width:
+            left_zone.append(threat)
+        elif x_center < 2 * zone_width:
+            center_zone.append(threat)
+        else:
+            right_zone.append(threat)
+
+    # Check for path blocked condition
+    total_threats = len(navigation_threats)
+    if total_threats > 1 and all(t['distance'] < 200 for t in navigation_threats):
+        blocked_area = sum(1 for t in navigation_threats if t['distance'] < 200)
+        if blocked_area / total_threats > NAVIGATION_SETTINGS['block_threshold']:
+            return "Path blocked in all directions, stop and wait", "blocked"
+
+    # Check left zone threats
+    if left_zone:
+        closest_left = min(left_zone, key=lambda x: x['distance'])
+        if closest_left['distance'] < NAVIGATION_SETTINGS['range']['close']:
+            return f"{closest_left['object']} {closest_left['distance']} centimeters on your left, try moving right", "right"
+
+    # Check right zone threats
+    if right_zone:
+        closest_right = min(right_zone, key=lambda x: x['distance'])
+        if closest_right['distance'] < NAVIGATION_SETTINGS['range']['close']:
+            return f"{closest_right['object']} {closest_right['distance']} centimeters on your right, try moving left", "left"
+
+    # Check center zone last
+    if center_zone:
+        closest_center = min(center_zone, key=lambda x: x['distance'])
+        if closest_center['distance'] < NAVIGATION_SETTINGS['range']['close']:
+            # Check which side has more clearance
+            left_dist = min((t['distance'] for t in left_zone), default=float('inf'))
+            right_dist = min((t['distance'] for t in right_zone), default=float('inf'))
+            if left_dist > right_dist:
+                return f"{closest_center['object']} {closest_center['distance']} centimeters ahead, try moving left", "left"
+            else:
+                return f"{closest_center['object']} {closest_center['distance']} centimeters ahead, try moving right", "right"
+
+    # If no immediate threats in any zone
+    closest = min(navigation_threats, key=lambda x: x['distance'])
+    if closest['distance'] > NAVIGATION_SETTINGS['clear_path_threshold']:
+        return "Path clear, continue ahead", "forward"
+    else:
+        return f"{closest['object']} {closest['distance']} centimeters ahead, proceed with caution", "caution"
+
+# Add after other global variables
+MODE_SWITCH_COOLDOWN = 3.0  # seconds between mode switch announcements
+last_mode_switch_time = time.time()
+
+# Add new flag after other global variables
+face_detection_requested = False
+
+# Add after other constants
+THREAT_QUEUE_CLEAR_INTERVAL = 3.0  # Clear threats every 3 seconds
+last_queue_clear_time = time.time()
+
+# Add after other constants
+NO_THREAT_ANNOUNCEMENT_INTERVAL = 3.0  # Announce path clear after 3 seconds of no threats
+last_threat_detected_time = time.time()
+>>>>>>> cf63e8fc11ccf56d6a6756d9bb437283f8e8f852
 
 # Main loop
 while True:
@@ -1225,7 +1505,7 @@ while True:
         if IS_RASPBERRY_PI:
             _results = model(processed_frame, verbose=False, iou=0.5, conf=0.3, max_det=MAX_OBJECTS)[0]
         else:
-            _results = model(processed_frame, verbose=False, iou=0.8)[0]
+            _results = model(processed_frame, verbose=False, iou=0.4)[0]
         detected_speech = []
         threats = []
 
@@ -1235,7 +1515,7 @@ while True:
             if env_conditions['low_light']:
                 print("Low light conditions detected")
         
-        # Enhanced threat detection
+        # Enhanced threat detection and object description
         detected_objects = []  # (object_name, distance, (x_center, y_center), threat_score)
         for result in _results.boxes.data:
             x_min, y_min, x_max, y_max, conf, class_id = result
@@ -1255,13 +1535,17 @@ while True:
             
             # Get directional position as string
             position_str, relative_pos = get_position(x_min, x_max, get_frame_width())
+
             # Store both position string and coordinates
             position_data = {
                 'direction': position_str,
                 'coords': (x_center, y_center)
             }
 
-            # Enhanced threat assessment
+            # Always add to detected_speech for description mode
+            detected_speech.append(f"{obj_name} at {distance} centimeters {position_str}")
+            
+            # Threat assessment only for threat objects
             if obj_name in THREAT_OBJECTS:
                 threat_info = THREAT_OBJECTS[obj_name]
                 
@@ -1282,17 +1566,18 @@ while True:
                     threats.append((obj_name, distance, position_data, threat_score))
                     detected_objects.append((obj_name, distance, position_data['coords'], threat_score))
                     
-                    # More conservative sound alerts in normal mode
+                    # More conservative sound alerts in idle mode
                     current_time = time.time()
-                    if current_mode == "normal":
+                    if current_mode == "navigation":
                         if (current_time - last_sound_time >= SOUND_COOLDOWN and 
                             distance < DISTANCE_THRESHOLD_NORMAL and 
-                            threat_score > PRIORITY_THRESHOLD_NORMAL):
+                            threat_score > PRIORITY_THRESHOLD_NORMAL and
+                            is_moving):  # Only beep for moving threats in idle mode
                             audio_manager.queue_sound(sounds['warning'], (x_min + x_max) / 2, distance)
                             last_sound_time = current_time
                     else:
-                        # Original behavior for other modes
-                        if distance < threat_info['safe_distance'] * 0.5:
+                        # Original behavior for other modes but with increased threshold
+                        if distance < threat_info['safe_distance'] * 0.3:  # Changed from 0.5 to 0.3
                             audio_manager.queue_sound(sounds['warning'], (x_min + x_max) / 2, distance)
 
             cv2.rectangle(processed_frame, (x_min, y_min), (x_max, y_max), (0, 0, 255), 2)  # Red for threats
@@ -1307,6 +1592,7 @@ while True:
         if command_data:
             command_type, command_value = command_data
             if command_type == "mode":
+<<<<<<< HEAD
                 current_mode = command_value
                 tts_handler.say(f"Switching to {command_value} mode")
                 if command_value == "read":
@@ -1399,11 +1685,55 @@ while True:
             except Exception as e:
                 logger.error(f"Error in book reading mode: {e}")
                 continue
+=======
+                # Only switch mode and announce if enough time has passed
+                if current_time - last_mode_switch_time > MODE_SWITCH_COOLDOWN:
+                    if command_value != current_mode:  # Only switch if mode is different
+                        current_mode = command_value
+                        tts_handler.say(f"Switching to {command_value} mode")
+                        last_mode_switch_time = current_time
+            elif command_type == "action":
+                if command_value == "describe":
+                    if detected_speech:
+                        announcement = ", ".join(detected_speech)
+                        tts_handler.say(f"I can see: {announcement}")
+                    else:
+                        tts_handler.say("No objects detected in view")
+                elif command_value == "detect_faces":
+                    face_detection_requested = True
+                    tts_handler.say("Starting face detection")
+                elif command_value == "clearance":
+                    clearances = analyze_path_clearance(get_frame_width(), detected_objects)
+                    
+                    # Generate clearance announcement
+                    clear_paths = []
+                    for zone, distance in clearances.items():
+                        if distance > 500:  # More than 5 meters is considered "clear"
+                            clear_paths.append(f"{zone} path clear")
+                        else:
+                            clear_paths.append(f"{zone} path clear for {int(distance)} centimeters")
+                    
+                    announcement = ". ".join(clear_paths)
+                    tts_handler.say(announcement)
+>>>>>>> cf63e8fc11ccf56d6a6756d9bb437283f8e8f852
 
         # Handle navigation mode
         if current_mode == "navigation":
+            current_time = time.time()
             navigation_threats = []
             
+            # Check if no threats for 3 seconds
+            if (current_time - last_threat_detected_time > NO_THREAT_ANNOUNCEMENT_INTERVAL and 
+                current_time - last_announcement_time > NO_THREAT_ANNOUNCEMENT_INTERVAL):
+                tts_handler.say("Path clear, safe to proceed")
+                last_announcement_time = current_time
+                
+            # Clear threats periodically
+            if current_time - last_queue_clear_time > THREAT_QUEUE_CLEAR_INTERVAL:
+                navigation_threats = []
+                tts_handler.clear_all()
+                last_queue_clear_time = current_time
+
             for result in _results.boxes.data:
                 x_min, y_min, x_max, y_max, conf, class_id = result
                 if conf < NAVIGATION_SETTINGS['conf_threshold']:
@@ -1436,48 +1766,47 @@ while True:
                         'coords': (x_center, y_center),
                         'is_moving': is_moving
                     })
+                    last_threat_detected_time = current_time  # Update last threat time
+                
+                if distance < NAVIGATION_SETTINGS['range']['immediate']:
+                    # Force immediate announcement for very close objects
+                    tts_handler.clear_all()
+                    tts_handler.say(f"Warning! {obj_name} very close {guidance}")
+                    audio_manager.queue_sound(sounds['warning'], x_center, distance)
+                    last_announcement_time = current_time
+                    break
             
             if navigation_threats:
-                # Process and announce navigation threats
                 current_time = time.time()
                 if current_time - last_announcement_time > NAVIGATION_SETTINGS['announcement_cooldown']:
-                    # Sort by both distance and angle from center
-                    navigation_threats.sort(key=lambda x: (
-                        x['distance'] if abs(x['coords'][0] - get_frame_width()/2) < 
-                        NAVIGATION_SETTINGS['safe_zone_width'] * get_frame_width() else float('inf'),
-                        abs(x['coords'][0] - get_frame_width()/2)
-                    ))
+                    direction = None  # Initialize direction variable
                     
-                    # Get path status
-                    path_status = update_navigation_state(navigation_threats)
-                    
-                    if path_status:
-                        announcements = [path_status]
+                    # Check for moving threats first
+                    moving_alert = detect_moving_threats(navigation_threats)
+                    if moving_alert:
+                        announcements = [moving_alert]
                     else:
-                        # Take closest threat in path
-                        threat = navigation_threats[0]
-                        guidance = get_enhanced_navigation_guidance(
-                            threat['coords'][0], 
-                            get_frame_width(), 
-                            threat['distance'],
-                            threat['object_width'] if 'object_width' in threat else 0
+                        # Get path guidance with direction
+                        guidance, direction = analyze_path_safety(
+                            navigation_threats,
+                            get_frame_width(),
+                            processed_frame.shape[0]
                         )
+                        announcements = [guidance]
+                    
+                    if announcements:
+                        tts_handler.say(". ".join(announcements))
+                        last_announcement_time = current_time
                         
-                        status = "moving " if threat['is_moving'] else ""
-                        announcement = f"{status}{threat['object']} {guidance}"
-                        if threat['urgency'] == "immediate":
-                            announcement = f"Warning! {announcement}"
-                        announcements = [announcement]
-                    
-                    if announcements:
-                        tts_handler.say(". ".join(announcements))
-                        last_announcement_time = current_time
-                    
-                    # Remove the audio feedback section completely
-                    if announcements:
-                        tts_handler.say(". ".join(announcements))
-                        last_announcement_time = current_time
-            
+                        # Only play spatial audio if we have a valid direction
+                        if direction:
+                            if direction == "left":
+                                audio_manager.queue_sound(sounds['direction'], 0, 100)
+                            elif direction == "right":
+                                audio_manager.queue_sound(sounds['direction'], get_frame_width(), 100)
+                            elif direction == "blocked":
+                                audio_manager.queue_sound(sounds['warning'], get_frame_width()/2, 50)
+
             # Draw navigation visualization
             draw_navigation_overlay(processed_frame, navigation_threats)
 
@@ -1533,28 +1862,33 @@ while True:
             time.sleep(0.01)
             continue
 
-        # Face recognition
-        if FACE_RECOGNITION_AVAILABLE and frame_count % FACE_SETTINGS['check_interval'] == 0:
+        # Face recognition - only process in idle mode
+        if current_mode != "navigation" and face_detection_requested and FACE_RECOGNITION_AVAILABLE:
             try:
-                known_faces = face_manager.detect_known_faces(processed_frame)
                 current_time = time.time()
-                
-                for face in known_faces:
-                    # Draw face rectangle
-                    left, top, right, bottom = face['location']
-                    cv2.rectangle(processed_frame, (left, top), (right, bottom), (0, 255, 0), 2)
-                    cv2.putText(processed_frame, face['name'], (left, top - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                    
-                    # Announce recognized faces with cooldown
-                    if current_time - face_manager.last_face_announcement > FACE_SETTINGS['announcement_cooldown']:
-                        x_center = face['center'][0]
-                        position = get_position(left, right, get_frame_width())
-                        announcement = f"Recognized {face['name']} {position}"
-                        tts_handler.say(announcement)
-                        face_manager.last_face_announcement = current_time
+                found_faces = face_manager.detect_known_faces(processed_frame)
+                if found_faces:
+                    face_detection_requested = False  # Reset after finding faces
+                    for face in found_faces:
+                        # Draw face box
+                        left, top, right, bottom = face['location']
+                        cv2.rectangle(processed_frame, (left, top), (right, bottom), (0, 255, 0), 2)
+                        cv2.putText(processed_frame, face['name'], (left, top - 10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        
+                        # Only announce in idle mode with cooldown
+                        if current_time - face_manager.last_face_announcement > FACE_SETTINGS['announcement_cooldown']:
+                            position_str, _ = get_position(left, right, get_frame_width())
+                            announcement = f"Recognized {face['name']} {position_str}"
+                            tts_handler.say(announcement)
+                            face_manager.last_face_announcement = current_time
+                elif frame_count % (FACE_SETTINGS['check_interval'] * 10) == 0:
+                    # Give up after checking several frames with no faces
+                    face_detection_requested = False
+                    tts_handler.say("No faces detected")
+                        
             except Exception as e:
-                if FACE_RECOGNITION_AVAILABLE:  # Only print once
+                if FACE_RECOGNITION_AVAILABLE:
                     print(f"Disabling face recognition due to error: {e}")
                     FACE_RECOGNITION_AVAILABLE = False
 
@@ -1790,3 +2124,209 @@ if FACE_RECOGNITION_AVAILABLE and frame_count % FACE_SETTINGS['check_interval'] 
             face_handler.last_announcement = current_time
 
 # ...existing code...
+
+# Update Navigation Settings
+NAVIGATION_SETTINGS = {
+    'announcement_cooldown': 2.0,
+    'moving_cooldown': 1.5,           # Shorter cooldown for moving threats
+    'stationary_cooldown': 3.0,       # Longer cooldown for stationary objects
+    'conf_threshold': 0.90,
+    'range': {
+        'immediate': 50,    # cm
+        'close': 200,       # Standard detection range
+        'medium': 300,
+        'far': 450
+    },
+    'zone_thresholds': {
+        'center': 0.4,      # Center zone width (40% of frame)
+        'left': 0.3,        # Left zone width (30% of frame)
+        'right': 0.3        # Right zone width (30% of frame)
+    },
+    'clear_path_threshold': 200,  # cm - minimum distance for clear path
+    'block_threshold': 0.8   # 70% of frame area must be blocked to trigger warning
+}
+
+# Add new variable to track last stationary announcement
+last_stationary_announcement = time.time()
+
+# Update the navigation mode section in main loop
+if current_mode == "navigation":
+    navigation_threats = []
+    
+    for result in _results.boxes.data:
+        x_min, y_min, x_max, y_max, conf, class_id = result
+        if conf < NAVIGATION_SETTINGS['conf_threshold']:
+            continue
+            
+        x_min, y_min, x_max, y_max = map(int, [x_min, y_min, x_max, y_max])
+        obj_name = model.names[int(class_id)]
+        x_center = (x_min + x_max) / 2
+        distance = round((KNOWN_WIDTH * FOCAL_LENGTH) / (x_max - x_min))
+        
+        if distance < NAVIGATION_SETTINGS['range']['far']:
+            guidance = get_enhanced_navigation_guidance(x_center, get_frame_width(), distance)
+            urgency, priority = get_urgency_level(distance)
+            
+            # Check for motion
+            is_moving = False
+            if obj_name in THREAT_OBJECTS and THREAT_OBJECTS[obj_name]['motion_sensitive']:
+                is_moving = motion_detector.detect_motion(processed_frame, (x_min, y_min, x_max, y_max))
+            
+            threat_score = THREAT_OBJECTS.get(obj_name, {'priority': 5})['priority']
+            if is_moving:
+                threat_score *= 1.5
+                
+            navigation_threats.append({
+                'object': obj_name,
+                'distance': distance,
+                'guidance': guidance,
+                'urgency': urgency,
+                'priority': threat_score,
+                'coords': (x_center, y_center),
+                'is_moving': is_moving
+            })
+    
+    if navigation_threats:
+        current_time = time.time()
+        moving_threats = [t for t in navigation_threats if t['is_moving']]
+        stationary_threats = [t for t in navigation_threats if not t['is_moving']]
+        
+        # Handle moving threats first (more urgent)
+        if moving_threats and current_time - last_announcement_time > NAVIGATION_SETTINGS['moving_cooldown']:
+            moving_alert = detect_moving_threats(navigation_threats)
+            if moving_alert:
+                tts_handler.say(moving_alert)
+                last_announcement_time = current_time
+        
+        # Handle stationary threats with longer cooldown
+        elif stationary_threats and current_time - last_stationary_announcement > NAVIGATION_SETTINGS['stationary_cooldown']:
+            guidance, direction = analyze_path_safety(navigation_threats, get_frame_width(), processed_frame.shape[0])
+            if guidance:
+                tts_handler.say(guidance)
+                last_stationary_announcement = current_time
+                
+                if direction:
+                    if direction == "left":
+                        audio_manager.queue_sound(sounds['direction'], 0, 100)
+                    elif direction == "right":
+                        audio_manager.queue_sound(sounds['direction'], get_frame_width(), 100)
+                    elif direction == "blocked":
+                        audio_manager.queue_sound(sounds['warning'], get_frame_width()/2, 50)
+
+
+# Add voice command for path query
+def _continuous_listen(self):
+    # ...existing code...
+    if "where should I go" in command or "which way" in command:
+        self.command_queue.put(("action", "path_query"))
+    # ...existing code...
+
+# ...rest of existing code...
+
+# Update Navigation Settings with clearer zone boundaries
+NAVIGATION_SETTINGS = {
+    'announcement_cooldown': 2.0,  # Increased from 1.2 to 2.0
+    'moving_cooldown': 1.5,           # Shorter cooldown for moving threats
+    'stationary_cooldown': 3.0,       # Longer cooldown for stationary objects
+    'conf_threshold': 0.90,  # Increased from 0.35 to 0.75 for more confident detections
+    'range': {
+        'very_close': 40,    # cm
+        'immediate': 100,    # cm
+        'close': 150,       # Reduced from 200 to 150
+        'medium': 300,      # Reduced from 350 to 300
+        'far': 450         # Reduced from 500 to 450
+    },
+    'max_threats': 2,
+    'priority_threshold': 7,  # Increased from 6 to 7
+    'safe_zone_width': 0.15,  # Narrower safe zone for precise navigation
+    'angle_thresholds': {
+        'center': 10,      # degrees
+        'slight': 20,
+        'moderate': 35,
+        'significant': 50
+    },
+    'path_width': 100,    # cm - typical path width
+    'clear_path_threshold': 200,  # cm - minimum safe distance for clear path
+    'block_threshold': 0.7,   # 70% of frame area must be blocked to trigger warning
+    'zones': {
+        'left': (0, 0.3),       # 0-30% of frame width
+        'center': (0.3, 0.7),   # 30-70% of frame width
+        'right': (0.7, 1.0)     # 70-100% of frame width
+    },
+    'zone_labels': {
+        'left': 'on your left',
+        'center': 'ahead of you',
+        'right': 'on your right'
+    }
+}
+
+def get_object_zone(x_center, frame_width):
+    """Determine which zone an object is in based on its x position"""
+    relative_pos = x_center / frame_width
+    
+    for zone, (start, end) in NAVIGATION_SETTINGS['zones'].items():
+        if start <= relative_pos < end:
+            return zone, NAVIGATION_SETTINGS['zone_labels'][zone]
+    
+    return 'center', NAVIGATION_SETTINGS['zone_labels']['center']  # Default fallback
+
+def get_enhanced_navigation_guidance(x_center, frame_width, distance, obj_width=0):
+    """Improved directional guidance with clearer zones"""
+    zone, position = get_object_zone(x_center, frame_width)
+    
+    # Distance context first
+    if distance < 50:
+        distance_str = "very close"
+        urgency = "stop immediately"
+    elif distance < 100:
+        distance_str = "close"
+        urgency = "slow down"
+    else:
+        distance_str = f"{distance} centimeters"
+        urgency = ""
+    
+    # Build guidance message
+    message = f"{distance_str} {position}"
+    if urgency:
+        message = f"{urgency}, object {message}"
+        
+    # Add movement suggestion
+    if zone == 'left':
+        message += ", move right"
+    elif zone == 'right':
+        message += ", move left"
+    elif zone == 'center' and distance < 200:
+        message += ", step back"
+        
+    return message
+
+def draw_navigation_overlay(frame, threats):
+    """Draw enhanced navigation overlay with clear zone visualization"""
+    width = frame.shape[1]
+    height = frame.shape[0]
+    
+    # Draw zone boundaries
+    for zone, (start, end) in NAVIGATION_SETTINGS['zones'].items():
+        x_start = int(start * width)
+        x_end = int(end * width)
+        
+        # Different colors for each zone
+        if zone == 'left':
+            color = (0, 0, 255)  # Red
+        elif zone == 'center':
+            color = (0, 255, 0)  # Green
+        else:
+            color = (255, 0, 0)  # Blue
+            
+        cv2.line(frame, (x_start, 0), (x_start, height), color, 2)
+        cv2.putText(frame, zone, (x_start + 10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+    
+    # Draw threats
+    for threat in threats:
+        x = int(threat['coords'][0])
+        y = height - int((threat['distance'] / NAVIGATION_SETTINGS['range']['far']) * height)
+        color = (0, 0, 255) if threat['urgency'] == "immediate" else (0, 255, 255)
+        cv2.circle(frame, (x, y), 5, color, -1)
+
+# ...rest of existing code...
